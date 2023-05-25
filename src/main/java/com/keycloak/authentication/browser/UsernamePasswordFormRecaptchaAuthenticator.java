@@ -46,6 +46,7 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
     @Override
     public void action(AuthenticationFlowContext context) {
+
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         if (formData.containsKey("cancel")) {
             context.cancelLogin();
@@ -54,12 +55,24 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
         String captcha = formData.getFirst(G_RECAPTCHA_RESPONSE);
         String username = formData.getFirst(AuthenticationManager.FORM_USERNAME);
+        UserModel user = null;
         if (username != null) {
-            UserModel user = KeycloakModelUtils.findUserByNameOrEmail(context.getSession(), context.getRealm(), username.trim());
+
+            user = KeycloakModelUtils.findUserByNameOrEmail(context.getSession(), context.getRealm(), username.trim());
 
             if (user != null) {
+
                 if (isUserTemporarilyDisabled(context, user)) return;
+
+                if (isNumberOfFailureReach(context, user, captcha)) {
+                    context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
+                    Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
+                    context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
+                    return;
+                }
+
                 if (isRecaptchaRequired(context, user)) {
+
                     context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
                     if (Objects.nonNull(captcha)) {
                         if (!isRecaptchaValid(context, captcha)) {
@@ -78,6 +91,11 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
         }
 
         if (!validateForm(context, formData)) {
+            if (user != null) {
+                if (isRecaptchaRequiredAfterLoginFailed(context, user)) {
+                    context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
+                }
+            }
             return;
         }
         context.getEvent().detail(Details.REGISTER_METHOD, "form");
@@ -85,8 +103,10 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
     }
 
     private boolean isUserTemporarilyDisabled(AuthenticationFlowContext context, UserModel user) {
+
         if (context.getRealm().isBruteForceProtected()) {
             if (context.getProtector().isTemporarilyDisabled(context.getSession(), context.getRealm(), user)) {
+
                 Response challengeResponse = challenge(context, Messages.ACCOUNT_TEMPORARILY_DISABLED);
                 context.failure(AuthenticationFlowError.USER_TEMPORARILY_DISABLED, challengeResponse);
                 return true;
@@ -107,6 +127,7 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
             }
         }
         String isRecaptchaRequiredStr = context.getAuthenticationSession().getAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE);
+
         return "true".equals(isRecaptchaRequiredStr) ?
                 createUsernamePasswordWithRecaptchaLogin(context, form) : createLoginForm(form);
     }
@@ -146,7 +167,22 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
     private boolean isRecaptchaRequired(AuthenticationFlowContext context, UserModel user) {
         UserLoginFailureModel userLoginFailures = context.getSession().loginFailures().getUserLoginFailure(context.getRealm(), user.getId());
 
-        int numberOfFailures = Objects.nonNull(userLoginFailures) ? userLoginFailures.getNumFailures() : 1;
+        int numberOfFailures = Objects.nonNull(userLoginFailures) ? userLoginFailures.getNumFailures() : 0;
+        String maxFailure = AuthenticatorUtil.getConfigValue(context.getAuthenticatorConfig(), MAX_FAILURE_CONFIG_NAME, "4");
+
+        return numberOfFailures >= Integer.valueOf(maxFailure);
+    }
+
+    private boolean isNumberOfFailureReach(AuthenticationFlowContext context, UserModel user, String captcha) {
+        UserLoginFailureModel userLoginFailures = context.getSession().loginFailures().getUserLoginFailure(context.getRealm(), user.getId());
+        int numberOfFailures = Objects.nonNull(userLoginFailures) ? userLoginFailures.getNumFailures() + 1 : 0;
+        String maxFailure = AuthenticatorUtil.getConfigValue(context.getAuthenticatorConfig(), MAX_FAILURE_CONFIG_NAME, "4");
+        return numberOfFailures > Integer.valueOf(maxFailure) && Objects.isNull(captcha) || "".equals(captcha);
+    }
+
+    private boolean isRecaptchaRequiredAfterLoginFailed(AuthenticationFlowContext context, UserModel user) {
+        UserLoginFailureModel userLoginFailures = context.getSession().loginFailures().getUserLoginFailure(context.getRealm(), user.getId());
+        int numberOfFailures = Objects.nonNull(userLoginFailures) ? userLoginFailures.getNumFailures() : 0;
         String maxFailure = AuthenticatorUtil.getConfigValue(context.getAuthenticatorConfig(), MAX_FAILURE_CONFIG_NAME, "4");
         return numberOfFailures + 1 >= Integer.valueOf(maxFailure);
     }
@@ -165,6 +201,7 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
     }
 
     protected boolean validateRecaptcha(AuthenticationFlowContext context, String captcha, String secret) {
+
         CloseableHttpClient httpClient = context.getSession().getProvider(HttpClientProvider.class).getHttpClient();
         HttpPost post = new HttpPost("https://www." + getRecaptchaDomain(context.getAuthenticatorConfig()) + "/recaptcha/api/siteverify");
         List<NameValuePair> formparams = new LinkedList<>();
@@ -192,6 +229,7 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
     }
 
     private Response createUsernamePasswordWithRecaptchaLogin(AuthenticationFlowContext context, LoginFormsProvider form) {
+
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         form.setAttribute("login", new LoginBean(formData));
 
