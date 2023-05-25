@@ -65,6 +65,7 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
                 if (isUserTemporarilyDisabled(context, user)) return;
 
                 if (isNumberOfFailureReach(context, user, captcha)) {
+                    logger.info("Recaptcha validation failed.");
                     context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
                     Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
                     context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
