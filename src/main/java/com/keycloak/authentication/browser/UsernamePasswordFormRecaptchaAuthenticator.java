@@ -96,6 +96,8 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
                 if (isRecaptchaRequiredAfterLoginFailed(context, user)) {
                     context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
                 }
+            } else {
+                context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
             }
             return;
         }
