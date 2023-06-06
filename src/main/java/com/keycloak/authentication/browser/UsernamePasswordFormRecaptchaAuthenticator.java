@@ -93,6 +93,9 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
         if (!validateForm(context, formData)) {
             if (user != null) {
+                if (context.getRealm().isBruteForceProtected()) {
+                    context.getProtector().failedLogin(context.getRealm(), user, context.getConnection());
+                }
                 if (isRecaptchaRequiredAfterLoginFailed(context, user)) {
                     context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
                 }
@@ -106,7 +109,6 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
     }
 
     private boolean isUserTemporarilyDisabled(AuthenticationFlowContext context, UserModel user) {
-
         if (context.getRealm().isBruteForceProtected()) {
             if (context.getProtector().isTemporarilyDisabled(context.getSession(), context.getRealm(), user)) {
 
