@@ -102,12 +102,9 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
                 if (context.getRealm().isBruteForceProtected()) {
                     context.getProtector().failedLogin(context.getRealm(), user, context.getConnection());
                 }
-                if (isRecaptchaRequiredAfterLoginFailed(context, user)) {
-                    context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
-                }
-            } else {
-                context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
+                if (isUserTemporarilyDisabled(context, user)) return;
             }
+            context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
             return;
         }
         context.getEvent().detail(Details.REGISTER_METHOD, "form");
