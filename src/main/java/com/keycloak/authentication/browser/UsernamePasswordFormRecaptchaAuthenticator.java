@@ -9,6 +9,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 import org.jboss.logging.Logger;
+import org.jboss.resteasy.specimpl.MultivaluedMapImpl;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.authenticators.browser.UsernamePasswordForm;
@@ -19,6 +20,7 @@ import org.keycloak.forms.login.freemarker.model.LoginBean;
 import org.keycloak.models.*;
 import org.keycloak.models.utils.FormMessage;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.messages.Messages;
@@ -41,7 +43,22 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
-        super.authenticate(context);
+        MultivaluedMap<String, String> formData = new MultivaluedMapImpl<>();
+        String loginHint = context.getAuthenticationSession().getClientNote(OIDCLoginProtocol.LOGIN_HINT_PARAM);
+
+        String rememberMeUsername = AuthenticationManager.getRememberMeUsername(context.getRealm(), context.getHttpRequest().getHttpHeaders());
+
+        if (loginHint != null || rememberMeUsername != null) {
+            if (loginHint != null) {
+                formData.add(AuthenticationManager.FORM_USERNAME, loginHint);
+            } else {
+                formData.add(AuthenticationManager.FORM_USERNAME, rememberMeUsername);
+                formData.add("rememberMe", "on");
+            }
+        }
+
+        Response challengeResponse = createUsernamePasswordWithRecaptchaLoginInit(context, context.form());
+        context.challenge(challengeResponse);
     }
 
     @Override
@@ -64,29 +81,18 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
                 if (isUserTemporarilyDisabled(context, user)) return;
 
-                if (isNumberOfFailureReach(context, user, captcha)) {
-                    logger.info("Recaptcha validation failed.");
-                    context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
-                    Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
-                    context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
-                    return;
-                }
-
-                if (isRecaptchaRequired(context, user)) {
-
-                    context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
-                    if (Objects.nonNull(captcha)) {
-                        if (!isRecaptchaValid(context, captcha)) {
-                            logger.info("Recaptcha validation failed.");
-                            Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
-                            context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
-                            return;
-                        }
-
-                    } else {
-                        context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
+                context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
+                if (Objects.nonNull(captcha)) {
+                    if (!isRecaptchaValid(context, captcha)) {
+                        logger.info("Recaptcha validation failed.");
+                        Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
+                        context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
                         return;
                     }
+
+                } else {
+                    context.forceChallenge(createUsernamePasswordWithRecaptchaLogin(context, context.form()));
+                    return;
                 }
             }
         }
@@ -237,6 +243,25 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
 
         MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
         form.setAttribute("login", new LoginBean(formData));
+
+        AuthenticatorConfigModel captchaConfig = context.getAuthenticatorConfig();
+        String userLanguageTag = context.getSession().getContext().resolveLocale(context.getUser()).toLanguageTag();
+        if (captchaConfig == null || captchaConfig.getConfig() == null
+                || captchaConfig.getConfig().get(SITE_KEY) == null
+                || captchaConfig.getConfig().get(SITE_SECRET) == null
+        ) {
+            form.addError(new FormMessage(null, Messages.RECAPTCHA_NOT_CONFIGURED));
+            return form.createLoginUsernamePassword();
+        }
+        String siteKey = captchaConfig.getConfig().get(SITE_KEY);
+        form.setAttribute("recaptchaRequired", true);
+        form.setAttribute("recaptchaSiteKey", siteKey);
+        form.addScript("https://www." + getRecaptchaDomain(captchaConfig) + "/recaptcha/api.js?hl=" + userLanguageTag);
+
+        return form.createLoginUsernamePassword();
+    }
+
+    private Response createUsernamePasswordWithRecaptchaLoginInit(AuthenticationFlowContext context, LoginFormsProvider form) {
 
         AuthenticatorConfigModel captchaConfig = context.getAuthenticatorConfig();
         String userLanguageTag = context.getSession().getContext().resolveLocale(context.getUser()).toLanguageTag();
