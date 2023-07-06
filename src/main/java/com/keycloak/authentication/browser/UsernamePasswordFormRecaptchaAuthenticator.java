@@ -75,6 +75,14 @@ public class UsernamePasswordFormRecaptchaAuthenticator extends UsernamePassword
         UserModel user = null;
         if (username != null) {
 
+            if (Validation.isBlank(captcha)) {
+                logger.info("Recaptcha validation failed.");
+                context.getAuthenticationSession().setAuthNote(RECAPTCHA_REQUIRED_AUTH_NOTE, "true");
+                Response failureChallenge = challenge(context, "Recaptcha validation failed.", null);
+                context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, failureChallenge);
+                return;
+            }
+
             user = KeycloakModelUtils.findUserByNameOrEmail(context.getSession(), context.getRealm(), username.trim());
 
             if (user != null) {
